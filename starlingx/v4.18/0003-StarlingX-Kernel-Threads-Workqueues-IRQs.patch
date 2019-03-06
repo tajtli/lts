@@ -1,0 +1,72 @@
+From cf5c693f412a9ecaa83c7ab0c1291baf53defb4e Mon Sep 17 00:00:00 2001
+From: Chris Friesen <chris.friesen@windriver.com>
+Date: Fri, 15 Feb 2019 09:11:04 -0600
+Subject: [PATCH 3/4] StarlingX: Kernel Threads Workqueues IRQs
+
+If the kthread_cpus boot arg is set it means we want to affine
+kernel threads to the specified CPU mask as much as possible
+in order to avoid doing work on other CPUs.
+
+In this commit we extend the meaning of that boot arg to also
+apply to the CPU affinity of unbound and ordered workqueues.
+
+We also use the kthread_cpus value to determine the default irq
+affinity.  Specifically, as long as the previously-calculated
+irq affinity intersects with the kthread_cpus affinity then we'll
+use the intersection of the two as the default irq affinity.
+
+Signed-off-by: Chris Friesen <chris.friesen@windriver.com>
+[VT: replacing spaces with tabs.  Performed tests]
+Signed-off-by: Vu Tran <vu.tran@windriver.com>
+Signed-off-by: Jim Somerville <Jim.Somerville@windriver.com>
+
+Signed-off-by: Abraham Arce <abraham.arce.moreno@intel.com>
+---
+ kernel/irq/manage.c | 7 +++++++
+ kernel/workqueue.c  | 5 +++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/kernel/irq/manage.c b/kernel/irq/manage.c
+index 9a8b7ba..f43f448 100644
+--- a/kernel/irq/manage.c
++++ b/kernel/irq/manage.c
+@@ -400,6 +400,13 @@ int irq_setup_affinity(struct irq_desc *desc)
+ 		if (cpumask_intersects(&mask, nodemask))
+ 			cpumask_and(&mask, &mask, nodemask);
+ 	}
++
++       /* This will narrow down the affinity further if we've specified
++        * a reduced cpu_kthread_mask in the boot args.
++        */
++       if (cpumask_intersects(&mask, cpu_kthread_mask))
++       cpumask_and(&mask, &mask, cpu_kthread_mask);
++
+ 	ret = irq_do_set_affinity(&desc->irq_data, &mask, false);
+ 	raw_spin_unlock(&mask_lock);
+ 	return ret;
+diff --git a/kernel/workqueue.c b/kernel/workqueue.c
+index 78b1920..b2d685c 100644
+--- a/kernel/workqueue.c
++++ b/kernel/workqueue.c
+@@ -5707,6 +5707,9 @@ int __init workqueue_init_early(void)
+ 
+ 		BUG_ON(!(attrs = alloc_workqueue_attrs(GFP_KERNEL)));
+ 		attrs->nice = std_nice[i];
++
++                /* If we've specified a kthread mask apply it here too. */
++                cpumask_copy(attrs->cpumask, cpu_kthread_mask);
+ 		unbound_std_wq_attrs[i] = attrs;
+ 
+ 		/*
+@@ -5717,6 +5720,8 @@ int __init workqueue_init_early(void)
+ 		BUG_ON(!(attrs = alloc_workqueue_attrs(GFP_KERNEL)));
+ 		attrs->nice = std_nice[i];
+ 		attrs->no_numa = true;
++               /* If we've specified a kthread mask apply it here too. */
++               cpumask_copy(attrs->cpumask, cpu_kthread_mask);
+ 		ordered_wq_attrs[i] = attrs;
+ 	}
+ 
+-- 
+2.7.4
+
